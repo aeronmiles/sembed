@@ -34,11 +34,20 @@ type OpenAIConfig struct {
 	Model string
 
 	// Dimensions is the desired output dimensions (0 = provider default).
+	// Not all providers support this (e.g. Voyage AI does not).
 	Dimensions int
 
 	// InputType is an optional type hint ("query" or "document").
 	// Used by Voyage AI; ignored by OpenAI.
 	InputType string
+
+	// SkipEncodingFormat suppresses the encoding_format field in requests.
+	// Set for providers that don't support it (e.g. Voyage AI).
+	SkipEncodingFormat bool
+
+	// SkipDimensions suppresses the dimensions field in requests.
+	// Set for providers that don't support it (e.g. Voyage AI).
+	SkipDimensions bool
 }
 
 // openaiClient implements Embedder for OpenAI-compatible APIs.
@@ -51,7 +60,7 @@ type openaiClient struct {
 type openaiRequest struct {
 	Model          string   `json:"model"`
 	Input          []string `json:"input"`
-	EncodingFormat string   `json:"encoding_format"`
+	EncodingFormat string   `json:"encoding_format,omitempty"`
 	Dimensions     int      `json:"dimensions,omitempty"`
 	InputType      string   `json:"input_type,omitempty"`
 }
@@ -81,11 +90,12 @@ func NewOpenAICompatible(cfg OpenAIConfig) Embedder {
 func VoyageAI(apiKey, model string, opts ...Option) Embedder {
 	o := applyOptions(opts)
 	return NewOpenAICompatible(OpenAIConfig{
-		BaseURL:    "https://api.voyageai.com/v1",
-		APIKey:     apiKey,
-		Model:      model,
-		Dimensions: o.Dimensions,
-		InputType:  o.InputType,
+		BaseURL:            "https://api.voyageai.com/v1",
+		APIKey:             apiKey,
+		Model:              model,
+		InputType:          o.InputType,
+		SkipEncodingFormat: true,
+		SkipDimensions:     true,
 	})
 }
 
@@ -106,11 +116,15 @@ func OpenAI(apiKey, model string, opts ...Option) Embedder {
 // the resulting vectors in the same order as the input texts.
 func (c *openaiClient) Embed(ctx context.Context, texts []string) ([]Vector, error) {
 	reqBody := openaiRequest{
-		Model:          c.cfg.Model,
-		Input:          texts,
-		EncodingFormat: "float",
-		Dimensions:     c.cfg.Dimensions,
-		InputType:      c.cfg.InputType,
+		Model:     c.cfg.Model,
+		Input:     texts,
+		InputType: c.cfg.InputType,
+	}
+	if !c.cfg.SkipEncodingFormat {
+		reqBody.EncodingFormat = "float"
+	}
+	if !c.cfg.SkipDimensions {
+		reqBody.Dimensions = c.cfg.Dimensions
 	}
 
 	body, err := json.Marshal(reqBody)
