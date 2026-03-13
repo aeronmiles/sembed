@@ -1,6 +1,9 @@
 package sembed
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Embedder generates vector embeddings from text.
 type Embedder interface {
@@ -25,27 +28,39 @@ type Result struct {
 	Score    float32  `json:"score"`
 }
 
-// Option configures provider behavior.
-type Option func(*options)
+// EmbedError represents an API error from an embedding provider.
+type EmbedError struct {
+	StatusCode int
+	Body       string
+}
 
-type options struct {
+// Error returns a human-readable error message including the HTTP status code and response body.
+func (e *EmbedError) Error() string {
+	return fmt.Sprintf("embedding API error (status %d): %s", e.StatusCode, e.Body)
+}
+
+// Option configures provider behavior.
+type Option func(*Options)
+
+// Options holds resolved provider options.
+type Options struct {
 	Dimensions int
 	InputType  string
 }
 
 // WithDimensions sets the output embedding dimensions.
 func WithDimensions(d int) Option {
-	return func(o *options) { o.Dimensions = d }
+	return func(o *Options) { o.Dimensions = d }
 }
 
 // WithInputType sets the input type hint (e.g. "query", "document" for Voyage AI).
 func WithInputType(t string) Option {
-	return func(o *options) { o.InputType = t }
+	return func(o *Options) { o.InputType = t }
 }
 
-// applyOptions merges variadic options into an options struct.
-func applyOptions(opts []Option) options {
-	var o options
+// ApplyOptions merges variadic options into an Options struct.
+func ApplyOptions(opts []Option) Options {
+	var o Options
 	for _, fn := range opts {
 		fn(&o)
 	}

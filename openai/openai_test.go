@@ -1,4 +1,4 @@
-package sembed
+package openai
 
 import (
 	"context"
@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/aeronmiles/sembed"
 )
 
-func TestOpenAI_SuccessfulEmbedding(t *testing.T) {
+func TestSuccessfulEmbedding(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -37,13 +39,13 @@ func TestOpenAI_SuccessfulEmbedding(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "text-embedding-3-small",
 	})
 
-	vectors, err := client.Embed(context.Background(), []string{"hello", "world"})
+	vectors, err := embedder.Embed(context.Background(), []string{"hello", "world"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestOpenAI_SuccessfulEmbedding(t *testing.T) {
 	}
 }
 
-func TestOpenAI_BatchOrdering(t *testing.T) {
+func TestBatchOrdering(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return data out of order: index 1 before index 0.
 		resp := map[string]interface{}{
@@ -72,13 +74,13 @@ func TestOpenAI_BatchOrdering(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "test-model",
 	})
 
-	vectors, err := client.Embed(context.Background(), []string{"first", "second"})
+	vectors, err := embedder.Embed(context.Background(), []string{"first", "second"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,26 +96,26 @@ func TestOpenAI_BatchOrdering(t *testing.T) {
 	}
 }
 
-func TestOpenAI_ErrorResponse(t *testing.T) {
+func TestErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"error": {"message": "rate limit exceeded"}}`))
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "test-model",
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	embedErr, ok := err.(*EmbedError)
+	embedErr, ok := err.(*sembed.EmbedError)
 	if !ok {
-		t.Fatalf("expected *EmbedError, got %T: %v", err, err)
+		t.Fatalf("expected *sembed.EmbedError, got %T: %v", err, err)
 	}
 	if embedErr.StatusCode != 429 {
 		t.Errorf("expected status 429, got %d", embedErr.StatusCode)
@@ -123,13 +125,13 @@ func TestOpenAI_ErrorResponse(t *testing.T) {
 	}
 }
 
-func TestOpenAI_ContextCancellation(t *testing.T) {
+func TestContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("request should not have reached the server")
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "test-model",
@@ -138,71 +140,53 @@ func TestOpenAI_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	_, err := client.Embed(ctx, []string{"hello"})
+	_, err := embedder.Embed(ctx, []string{"hello"})
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
 	}
 }
 
 func TestVoyageAI_Constructor(t *testing.T) {
-	var capturedBody openaiRequest
+	embedder := VoyageAI("voyage-key", "voyage-4-lite", sembed.WithInputType("document"))
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &capturedBody)
-
-		resp := map[string]interface{}{
-			"data": []map[string]interface{}{
-				{"embedding": []float32{0.1}, "index": 0},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	// VoyageAI uses a hardcoded base URL, so we need to test the config directly.
-	embedder := VoyageAI("voyage-key", "voyage-4-lite", WithInputType("document"))
-
-	// Verify the client was configured with Voyage AI base URL.
-	oc, ok := embedder.(*openaiClient)
+	c, ok := embedder.(*client)
 	if !ok {
-		t.Fatal("expected *openaiClient")
+		t.Fatal("expected *client")
 	}
-	if oc.cfg.BaseURL != "https://api.voyageai.com/v1" {
-		t.Errorf("expected Voyage AI base URL, got %s", oc.cfg.BaseURL)
+	if c.cfg.BaseURL != "https://api.voyageai.com/v1" {
+		t.Errorf("expected Voyage AI base URL, got %s", c.cfg.BaseURL)
 	}
-	if oc.cfg.InputType != "document" {
-		t.Errorf("expected input_type 'document', got %s", oc.cfg.InputType)
+	if c.cfg.InputType != "document" {
+		t.Errorf("expected input_type 'document', got %s", c.cfg.InputType)
 	}
-	if oc.cfg.APIKey != "voyage-key" {
-		t.Errorf("expected API key 'voyage-key', got %s", oc.cfg.APIKey)
+	if c.cfg.APIKey != "voyage-key" {
+		t.Errorf("expected API key 'voyage-key', got %s", c.cfg.APIKey)
 	}
-	if oc.cfg.Model != "voyage-4-lite" {
-		t.Errorf("expected model 'voyage-4-lite', got %s", oc.cfg.Model)
+	if c.cfg.Model != "voyage-4-lite" {
+		t.Errorf("expected model 'voyage-4-lite', got %s", c.cfg.Model)
 	}
 }
 
-func TestOpenAI_Constructor(t *testing.T) {
-	embedder := OpenAI("openai-key", "text-embedding-3-small")
+func TestNew_Constructor(t *testing.T) {
+	embedder := New("openai-key", "text-embedding-3-small")
 
-	oc, ok := embedder.(*openaiClient)
+	c, ok := embedder.(*client)
 	if !ok {
-		t.Fatal("expected *openaiClient")
+		t.Fatal("expected *client")
 	}
-	if oc.cfg.BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("expected OpenAI base URL, got %s", oc.cfg.BaseURL)
+	if c.cfg.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("expected OpenAI base URL, got %s", c.cfg.BaseURL)
 	}
-	if oc.cfg.APIKey != "openai-key" {
-		t.Errorf("expected API key 'openai-key', got %s", oc.cfg.APIKey)
+	if c.cfg.APIKey != "openai-key" {
+		t.Errorf("expected API key 'openai-key', got %s", c.cfg.APIKey)
 	}
-	if oc.cfg.Model != "text-embedding-3-small" {
-		t.Errorf("expected model 'text-embedding-3-small', got %s", oc.cfg.Model)
+	if c.cfg.Model != "text-embedding-3-small" {
+		t.Errorf("expected model 'text-embedding-3-small', got %s", c.cfg.Model)
 	}
 }
 
-func TestOpenAI_WithDimensions(t *testing.T) {
-	var capturedBody openaiRequest
+func TestWithDimensions(t *testing.T) {
+	var capturedBody request
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -218,14 +202,14 @@ func TestOpenAI_WithDimensions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL:    server.URL,
 		APIKey:     "test-key",
 		Model:      "test-model",
 		Dimensions: 256,
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,8 +218,8 @@ func TestOpenAI_WithDimensions(t *testing.T) {
 	}
 }
 
-func TestOpenAI_WithInputType(t *testing.T) {
-	var capturedBody openaiRequest
+func TestWithInputType(t *testing.T) {
+	var capturedBody request
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -251,14 +235,14 @@ func TestOpenAI_WithInputType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL:   server.URL,
 		APIKey:    "test-key",
 		Model:     "test-model",
 		InputType: "query",
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -267,7 +251,7 @@ func TestOpenAI_WithInputType(t *testing.T) {
 	}
 }
 
-func TestOpenAI_DimensionsOmittedWhenZero(t *testing.T) {
+func TestDimensionsOmittedWhenZero(t *testing.T) {
 	var capturedRaw map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,14 +268,14 @@ func TestOpenAI_DimensionsOmittedWhenZero(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "test-model",
 		// Dimensions: 0 (default)
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,7 +284,7 @@ func TestOpenAI_DimensionsOmittedWhenZero(t *testing.T) {
 	}
 }
 
-func TestOpenAI_InputTypeOmittedWhenEmpty(t *testing.T) {
+func TestInputTypeOmittedWhenEmpty(t *testing.T) {
 	var capturedRaw map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -317,14 +301,14 @@ func TestOpenAI_InputTypeOmittedWhenEmpty(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOpenAICompatible(OpenAIConfig{
+	embedder := NewCompatible(Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 		Model:   "test-model",
 		// InputType: "" (default)
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

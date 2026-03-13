@@ -1,4 +1,4 @@
-package sembed
+package ollama
 
 import (
 	"bytes"
@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/aeronmiles/sembed"
 )
 
-// OllamaConfig configures the Ollama embeddings provider.
-type OllamaConfig struct {
+// Config configures the Ollama embeddings provider.
+type Config struct {
 	// BaseURL defaults to "http://localhost:11434" if empty.
 	BaseURL string
 
@@ -18,40 +20,40 @@ type OllamaConfig struct {
 	Model string
 }
 
-// ollamaClient implements Embedder for a local Ollama instance.
-type ollamaClient struct {
-	cfg    OllamaConfig
-	client *http.Client
+// client implements sembed.Embedder for a local Ollama instance.
+type client struct {
+	cfg        Config
+	httpClient *http.Client
 }
 
-// ollamaRequest is the JSON request body for the Ollama embed endpoint.
-type ollamaRequest struct {
+// request is the JSON request body for the Ollama embed endpoint.
+type request struct {
 	Model string   `json:"model"`
 	Input []string `json:"input"`
 }
 
-// ollamaResponse is the JSON response from the Ollama embed endpoint.
-type ollamaResponse struct {
+// response is the JSON response from the Ollama embed endpoint.
+type response struct {
 	Model      string      `json:"model"`
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
-// NewOllama creates an Embedder for a local Ollama instance.
+// New creates an Embedder for a local Ollama instance.
 // If BaseURL is empty, it defaults to "http://localhost:11434".
-func NewOllama(cfg OllamaConfig) Embedder {
+func New(cfg Config) sembed.Embedder {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "http://localhost:11434"
 	}
-	return &ollamaClient{
-		cfg:    cfg,
-		client: &http.Client{},
+	return &client{
+		cfg:        cfg,
+		httpClient: &http.Client{},
 	}
 }
 
 // Embed sends texts to the Ollama embed endpoint and returns the resulting
 // vectors in the same order as the input texts.
-func (c *ollamaClient) Embed(ctx context.Context, texts []string) ([]Vector, error) {
-	reqBody := ollamaRequest{
+func (c *client) Embed(ctx context.Context, texts []string) ([]sembed.Vector, error) {
+	reqBody := request{
 		Model: c.cfg.Model,
 		Input: texts,
 	}
@@ -68,7 +70,7 @@ func (c *ollamaClient) Embed(ctx context.Context, texts []string) ([]Vector, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -80,20 +82,20 @@ func (c *ollamaClient) Embed(ctx context.Context, texts []string) ([]Vector, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &EmbedError{
+		return nil, &sembed.EmbedError{
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 		}
 	}
 
-	var result ollamaResponse
+	var result response
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	vectors := make([]Vector, len(result.Embeddings))
+	vectors := make([]sembed.Vector, len(result.Embeddings))
 	for i, emb := range result.Embeddings {
-		vectors[i] = Vector(emb)
+		vectors[i] = sembed.Vector(emb)
 	}
 
 	return vectors, nil

@@ -1,4 +1,4 @@
-package sembed
+package openai
 
 import (
 	"bytes"
@@ -8,21 +8,12 @@ import (
 	"io"
 	"net/http"
 	"sort"
+
+	"github.com/aeronmiles/sembed"
 )
 
-// EmbedError represents an API error from an embedding provider.
-type EmbedError struct {
-	StatusCode int
-	Body       string
-}
-
-// Error returns a human-readable error message including the HTTP status code and response body.
-func (e *EmbedError) Error() string {
-	return fmt.Sprintf("embedding API error (status %d): %s", e.StatusCode, e.Body)
-}
-
-// OpenAIConfig configures an OpenAI-compatible embeddings provider.
-type OpenAIConfig struct {
+// Config configures an OpenAI-compatible embeddings provider.
+type Config struct {
 	// BaseURL is the API base (e.g. "https://api.openai.com/v1").
 	// Must not include the /embeddings path.
 	BaseURL string
@@ -50,14 +41,14 @@ type OpenAIConfig struct {
 	SkipDimensions bool
 }
 
-// openaiClient implements Embedder for OpenAI-compatible APIs.
-type openaiClient struct {
-	cfg    OpenAIConfig
-	client *http.Client
+// client implements sembed.Embedder for OpenAI-compatible APIs.
+type client struct {
+	cfg        Config
+	httpClient *http.Client
 }
 
-// openaiRequest is the JSON request body for the embeddings endpoint.
-type openaiRequest struct {
+// request is the JSON request body for the embeddings endpoint.
+type request struct {
 	Model          string   `json:"model"`
 	Input          []string `json:"input"`
 	EncodingFormat string   `json:"encoding_format,omitempty"`
@@ -65,31 +56,31 @@ type openaiRequest struct {
 	InputType      string   `json:"input_type,omitempty"`
 }
 
-// openaiResponse is the JSON response from the embeddings endpoint.
-type openaiResponse struct {
-	Data []openaiEmbedding `json:"data"`
+// response is the JSON response from the embeddings endpoint.
+type response struct {
+	Data []embedding `json:"data"`
 }
 
-// openaiEmbedding is a single embedding in the response.
-type openaiEmbedding struct {
+// embedding is a single embedding in the response.
+type embedding struct {
 	Embedding []float32 `json:"embedding"`
 	Index     int       `json:"index"`
 }
 
-// NewOpenAICompatible creates an Embedder for any OpenAI-compatible API.
+// NewCompatible creates an Embedder for any OpenAI-compatible API.
 // The config must include BaseURL, APIKey, and Model at minimum.
-func NewOpenAICompatible(cfg OpenAIConfig) Embedder {
-	return &openaiClient{
-		cfg:    cfg,
-		client: &http.Client{},
+func NewCompatible(cfg Config) sembed.Embedder {
+	return &client{
+		cfg:        cfg,
+		httpClient: &http.Client{},
 	}
 }
 
 // VoyageAI creates an Embedder for Voyage AI.
 // Base URL: https://api.voyageai.com/v1
-func VoyageAI(apiKey, model string, opts ...Option) Embedder {
-	o := applyOptions(opts)
-	return NewOpenAICompatible(OpenAIConfig{
+func VoyageAI(apiKey, model string, opts ...sembed.Option) sembed.Embedder {
+	o := sembed.ApplyOptions(opts)
+	return NewCompatible(Config{
 		BaseURL:            "https://api.voyageai.com/v1",
 		APIKey:             apiKey,
 		Model:              model,
@@ -99,11 +90,11 @@ func VoyageAI(apiKey, model string, opts ...Option) Embedder {
 	})
 }
 
-// OpenAI creates an Embedder for OpenAI.
+// New creates an Embedder for OpenAI.
 // Base URL: https://api.openai.com/v1
-func OpenAI(apiKey, model string, opts ...Option) Embedder {
-	o := applyOptions(opts)
-	return NewOpenAICompatible(OpenAIConfig{
+func New(apiKey, model string, opts ...sembed.Option) sembed.Embedder {
+	o := sembed.ApplyOptions(opts)
+	return NewCompatible(Config{
 		BaseURL:    "https://api.openai.com/v1",
 		APIKey:     apiKey,
 		Model:      model,
@@ -114,8 +105,8 @@ func OpenAI(apiKey, model string, opts ...Option) Embedder {
 
 // Embed sends texts to the OpenAI-compatible embeddings endpoint and returns
 // the resulting vectors in the same order as the input texts.
-func (c *openaiClient) Embed(ctx context.Context, texts []string) ([]Vector, error) {
-	reqBody := openaiRequest{
+func (c *client) Embed(ctx context.Context, texts []string) ([]sembed.Vector, error) {
+	reqBody := request{
 		Model:     c.cfg.Model,
 		Input:     texts,
 		InputType: c.cfg.InputType,
@@ -140,7 +131,7 @@ func (c *openaiClient) Embed(ctx context.Context, texts []string) ([]Vector, err
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -152,13 +143,13 @@ func (c *openaiClient) Embed(ctx context.Context, texts []string) ([]Vector, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &EmbedError{
+		return nil, &sembed.EmbedError{
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 		}
 	}
 
-	var result openaiResponse
+	var result response
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
@@ -168,9 +159,9 @@ func (c *openaiClient) Embed(ctx context.Context, texts []string) ([]Vector, err
 		return result.Data[i].Index < result.Data[j].Index
 	})
 
-	vectors := make([]Vector, len(result.Data))
+	vectors := make([]sembed.Vector, len(result.Data))
 	for i, d := range result.Data {
-		vectors[i] = Vector(d.Embedding)
+		vectors[i] = sembed.Vector(d.Embedding)
 	}
 
 	return vectors, nil

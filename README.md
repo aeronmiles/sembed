@@ -28,13 +28,14 @@ import (
 	"os"
 
 	"github.com/aeronmiles/sembed"
+	"github.com/aeronmiles/sembed/openai"
 )
 
 func main() {
 	ctx := context.Background()
 
 	// Create a Voyage AI embedder
-	embedder := sembed.VoyageAI(os.Getenv("VOYAGE_API_KEY"), "voyage-3-lite")
+	embedder := openai.VoyageAI(os.Getenv("VOYAGE_API_KEY"), "voyage-3-lite")
 
 	// Embed some documents
 	texts := []string{
@@ -69,32 +70,38 @@ func main() {
 ### OpenAI
 
 ```go
-embedder := sembed.OpenAI(apiKey, "text-embedding-3-small")
+import "github.com/aeronmiles/sembed/openai"
+
+embedder := openai.New(apiKey, "text-embedding-3-small")
 
 // With reduced dimensions
-embedder = sembed.OpenAI(apiKey, "text-embedding-3-large", sembed.WithDimensions(512))
+embedder = openai.New(apiKey, "text-embedding-3-large", sembed.WithDimensions(512))
 ```
 
 ### Voyage AI
 
 ```go
-embedder := sembed.VoyageAI(apiKey, "voyage-3-lite")
+import "github.com/aeronmiles/sembed/openai"
+
+embedder := openai.VoyageAI(apiKey, "voyage-3-lite")
 
 // With input type hint for asymmetric search
-embedder = sembed.VoyageAI(apiKey, "voyage-3-lite", sembed.WithInputType("document"))
-queryEmb := sembed.VoyageAI(apiKey, "voyage-3-lite", sembed.WithInputType("query"))
+embedder = openai.VoyageAI(apiKey, "voyage-3-lite", sembed.WithInputType("document"))
+queryEmb := openai.VoyageAI(apiKey, "voyage-3-lite", sembed.WithInputType("query"))
 ```
 
 ### Ollama
 
 ```go
+import "github.com/aeronmiles/sembed/ollama"
+
 // Defaults to http://localhost:11434
-embedder := sembed.NewOllama(sembed.OllamaConfig{
+embedder := ollama.New(ollama.Config{
 	Model: "nomic-embed-text",
 })
 
 // Custom host
-embedder = sembed.NewOllama(sembed.OllamaConfig{
+embedder = ollama.New(ollama.Config{
 	BaseURL: "http://gpu-server:11434",
 	Model:   "mxbai-embed-large",
 })
@@ -105,7 +112,9 @@ embedder = sembed.NewOllama(sembed.OllamaConfig{
 Works with vLLM, LiteLLM, Azure, or any endpoint that speaks the OpenAI embeddings protocol.
 
 ```go
-embedder := sembed.NewOpenAICompatible(sembed.OpenAIConfig{
+import "github.com/aeronmiles/sembed/openai"
+
+embedder := openai.NewCompatible(openai.Config{
 	BaseURL:    "https://my-vllm-server/v1",
 	APIKey:     "token",
 	Model:      "BAAI/bge-small-en-v1.5",

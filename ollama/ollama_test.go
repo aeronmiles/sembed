@@ -1,4 +1,4 @@
-package sembed
+package ollama
 
 import (
 	"context"
@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/aeronmiles/sembed"
 )
 
-func TestOllama_SuccessfulEmbedding(t *testing.T) {
+func TestSuccessfulEmbedding(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -21,7 +23,7 @@ func TestOllama_SuccessfulEmbedding(t *testing.T) {
 			t.Errorf("expected Content-Type application/json, got %s", ct)
 		}
 
-		var reqBody ollamaRequest
+		var reqBody request
 		body, _ := io.ReadAll(r.Body)
 		json.Unmarshal(body, &reqBody)
 
@@ -29,7 +31,7 @@ func TestOllama_SuccessfulEmbedding(t *testing.T) {
 			t.Errorf("expected model 'nomic-embed-text', got %s", reqBody.Model)
 		}
 
-		resp := ollamaResponse{
+		resp := response{
 			Model: "nomic-embed-text",
 			Embeddings: [][]float32{
 				{0.1, 0.2, 0.3},
@@ -40,12 +42,12 @@ func TestOllama_SuccessfulEmbedding(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOllama(OllamaConfig{
+	embedder := New(Config{
 		BaseURL: server.URL,
 		Model:   "nomic-embed-text",
 	})
 
-	vectors, err := client.Embed(context.Background(), []string{"hello"})
+	vectors, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,39 +59,39 @@ func TestOllama_SuccessfulEmbedding(t *testing.T) {
 	}
 }
 
-func TestOllama_DefaultBaseURL(t *testing.T) {
-	client := NewOllama(OllamaConfig{
+func TestDefaultBaseURL(t *testing.T) {
+	embedder := New(Config{
 		Model: "nomic-embed-text",
 	})
 
-	oc, ok := client.(*ollamaClient)
+	c, ok := embedder.(*client)
 	if !ok {
-		t.Fatal("expected *ollamaClient")
+		t.Fatal("expected *client")
 	}
-	if oc.cfg.BaseURL != "http://localhost:11434" {
-		t.Errorf("expected default base URL http://localhost:11434, got %s", oc.cfg.BaseURL)
+	if c.cfg.BaseURL != "http://localhost:11434" {
+		t.Errorf("expected default base URL http://localhost:11434, got %s", c.cfg.BaseURL)
 	}
 }
 
-func TestOllama_ErrorResponse(t *testing.T) {
+func TestErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "model not found"}`))
 	}))
 	defer server.Close()
 
-	client := NewOllama(OllamaConfig{
+	embedder := New(Config{
 		BaseURL: server.URL,
 		Model:   "nonexistent-model",
 	})
 
-	_, err := client.Embed(context.Background(), []string{"hello"})
+	_, err := embedder.Embed(context.Background(), []string{"hello"})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	embedErr, ok := err.(*EmbedError)
+	embedErr, ok := err.(*sembed.EmbedError)
 	if !ok {
-		t.Fatalf("expected *EmbedError, got %T: %v", err, err)
+		t.Fatalf("expected *sembed.EmbedError, got %T: %v", err, err)
 	}
 	if embedErr.StatusCode != 500 {
 		t.Errorf("expected status 500, got %d", embedErr.StatusCode)
@@ -99,13 +101,13 @@ func TestOllama_ErrorResponse(t *testing.T) {
 	}
 }
 
-func TestOllama_ContextCancellation(t *testing.T) {
+func TestContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("request should not have reached the server")
 	}))
 	defer server.Close()
 
-	client := NewOllama(OllamaConfig{
+	embedder := New(Config{
 		BaseURL: server.URL,
 		Model:   "nomic-embed-text",
 	})
@@ -113,15 +115,15 @@ func TestOllama_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	_, err := client.Embed(ctx, []string{"hello"})
+	_, err := embedder.Embed(ctx, []string{"hello"})
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
 	}
 }
 
-func TestOllama_MultipleTexts(t *testing.T) {
+func TestMultipleTexts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var reqBody ollamaRequest
+		var reqBody request
 		body, _ := io.ReadAll(r.Body)
 		json.Unmarshal(body, &reqBody)
 
@@ -129,7 +131,7 @@ func TestOllama_MultipleTexts(t *testing.T) {
 			t.Errorf("expected 3 input texts, got %d", len(reqBody.Input))
 		}
 
-		resp := ollamaResponse{
+		resp := response{
 			Model: "nomic-embed-text",
 			Embeddings: [][]float32{
 				{0.1, 0.2},
@@ -142,12 +144,12 @@ func TestOllama_MultipleTexts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewOllama(OllamaConfig{
+	embedder := New(Config{
 		BaseURL: server.URL,
 		Model:   "nomic-embed-text",
 	})
 
-	vectors, err := client.Embed(context.Background(), []string{"one", "two", "three"})
+	vectors, err := embedder.Embed(context.Background(), []string{"one", "two", "three"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
